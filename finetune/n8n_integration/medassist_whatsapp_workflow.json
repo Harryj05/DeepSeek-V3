@@ -1,0 +1,424 @@
+{
+  "name": "MedAssist AI WhatsApp Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "whatsapp-webhook",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "medassist-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-message-type",
+              "leftValue": "={{ $json.entry[0].changes[0].value.messages[0].type }}",
+              "rightValue": "text",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "message-type-filter",
+      "name": "Filter Text Messages",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract message data\nconst entry = $input.first().json.entry[0];\nconst change = entry.changes[0];\nconst message = change.value.messages[0];\n\n// Extract user info\nconst user_id = message.from;\nconst user_message = message.text.body;\nconst timestamp = message.timestamp;\n\n// Prepare data for MedAssist API\nreturn {\n  json: {\n    user_id: user_id,\n    message: user_message,\n    timestamp: timestamp,\n    phone_number: user_id,\n    message_type: 'text'\n  }\n};"
+      },
+      "id": "extract-message-data",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5000/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "medassist-api-call",
+      "name": "Call MedAssist API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare WhatsApp message response\nconst medassistResponse = $input.first().json;\nconst originalData = $('Extract Message Data').first().json;\n\n// Format response for WhatsApp\nconst response = {\n  messaging_product: 'whatsapp',\n  to: originalData.user_id,\n  type: 'text',\n  text: {\n    body: medassistResponse.response\n  }\n};\n\n// Add session info for logging\nresponse.session_info = {\n  input_type: medassistResponse.input_type,\n  timestamp: medassistResponse.timestamp\n};\n\nreturn {\n  json: response\n};"
+      },
+      "id": "format-whatsapp-response",
+      "name": "Format WhatsApp Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v17.0/YOUR_PHONE_NUMBER_ID/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_ACCESS_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {}
+      },
+      "id": "send-whatsapp-message",
+      "name": "Send WhatsApp Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log the interaction\nconst requestData = $('Extract Message Data').first().json;\nconst responseData = $('Call MedAssist API').first().json;\nconst whatsappResponse = $('Send WhatsApp Message').first().json;\n\n// Create log entry\nconst logEntry = {\n  timestamp: new Date().toISOString(),\n  user_id: requestData.user_id,\n  user_message: requestData.message,\n  bot_response: responseData.response,\n  input_type: responseData.input_type,\n  whatsapp_status: whatsappResponse.error ? 'failed' : 'success',\n  session_data: responseData.session\n};\n\n// You can save this to a database or file\nconsole.log('MedAssist Interaction Log:', JSON.stringify(logEntry, null, 2));\n\nreturn {\n  json: {\n    status: 'success',\n    log_entry: logEntry\n  }\n};"
+      },
+      "id": "log-interaction",
+      "name": "Log Interaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle non-text messages (voice, image, etc.)\nconst entry = $input.first().json.entry[0];\nconst change = entry.changes[0];\nconst message = change.value.messages[0];\n\nlet responseMessage = '';\n\nswitch(message.type) {\n  case 'audio':\n    responseMessage = '🎤 Voice received! Processing...\\nI understood: \"Voice message\" Is this correct?\\n✅ Yes\\n❌ No (type correct symptom)';\n    break;\n  case 'image':\n    responseMessage = '📷 Image received! I can see you\\'ve shared a photo.\\nPlease describe what you\\'re experiencing so I can help you better.';\n    break;\n  case 'document':\n    responseMessage = '📄 Document received! For medical reports, please use our web app for detailed analysis: medassist.ai/reports';\n    break;\n  default:\n    responseMessage = 'I can help you with text messages. Please type your symptoms or health concerns.';\n}\n\nreturn {\n  json: {\n    messaging_product: 'whatsapp',\n    to: message.from,\n    type: 'text',\n    text: {\n      body: responseMessage\n    }\n  }\n};"
+      },
+      "id": "handle-non-text-messages",
+      "name": "Handle Non-Text Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v17.0/YOUR_PHONE_NUMBER_ID/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_ACCESS_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {}
+      },
+      "id": "send-non-text-response",
+      "name": "Send Non-Text Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "non-text-webhook-response",
+      "name": "Non-Text Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5000/health",
+        "options": {}
+      },
+      "id": "health-check",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [240, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-health",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "healthy",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "health-status-check",
+      "name": "Check Health Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\": \"MedAssist AI Bot is healthy and ready\"}"
+      },
+      "id": "health-response",
+      "name": "Health Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\": \"MedAssist AI Bot is not available\"}"
+      },
+      "id": "unhealthy-response",
+      "name": "Unhealthy Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 200]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Filter Text Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Text Messages": {
+      "main": [
+        [
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Non-Text Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Call MedAssist API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call MedAssist API": {
+      "main": [
+        [
+          {
+            "node": "Format WhatsApp Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format WhatsApp Response": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Interaction": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Non-Text Messages": {
+      "main": [
+        [
+          {
+            "node": "Send Non-Text Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Non-Text Response": {
+      "main": [
+        [
+          {
+            "node": "Non-Text Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Check": {
+      "main": [
+        [
+          {
+            "node": "Check Health Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Health Status": {
+      "main": [
+        [
+          {
+            "node": "Health Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unhealthy Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "medassist-ai",
+      "name": "MedAssist AI"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "whatsapp-bot",
+      "name": "WhatsApp Bot"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+} 
